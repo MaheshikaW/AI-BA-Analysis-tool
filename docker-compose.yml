@@ -8,4 +8,9 @@ services:
     environment:
       - PORT=4000
       - NODE_ENV=production
+    volumes:
+      - app-data:/app/backend/data
     restart: unless-stopped
+
+volumes:
+  app-data:

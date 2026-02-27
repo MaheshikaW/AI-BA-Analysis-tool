@@ -46,6 +46,19 @@ To use a different sheet or tab, set in backend `.env`: `GOOGLE_SHEET_ID` and `G
 
 ## How to host
 
+### Docker on a server (recommended for production)
+
+To run the app on a Linux server (VPS, cloud VM, or on-prem):
+
+1. Copy the project to the server (or clone from Git).
+2. Copy `backend/.env.example` to `backend/.env` and set `OPENAI_API_KEY` (and optional vars).
+3. Run: `docker compose build && docker compose up -d`.
+4. Open **http://YOUR_SERVER_IP:4080** (or use a reverse proxy for port 80/HTTPS).
+
+See **[DEPLOY.md](DEPLOY.md)** for step-by-step server setup, firewall, and optional Nginx/Caddy + HTTPS.
+
+---
+
 ### 1. Same network (office / Wi‑Fi) – one URL
 
 Best for sharing with colleagues on the same network. One port, one link.
