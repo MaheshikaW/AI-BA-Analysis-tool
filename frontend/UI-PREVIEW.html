@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OHRM Feature Scoring – UI Preview</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --surface: #18181c;
+      --border: #2a2a30;
+      --text: #e4e4e7;
+      --muted: #71717a;
+      --accent: #f97316;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; padding: 1.5rem; }
+    .app { max-width: 1200px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header h1 { font-size: 1.75rem; font-weight: 700; margin: 0; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+    .filters select { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 0.5rem 0.75rem; border-radius: 10px; font-size: 0.9rem; margin-right: 0.5rem; }
+    .btn { padding: 0.5rem 1rem; border-radius: 10px; font-weight: 600; font-size: 0.875rem; cursor: pointer; border: none; font-family: inherit; margin-left: 0.5rem; }
+    .btn.primary { background: var(--accent); color: #fff; }
+    .btn.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+    .action-btns { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+    .btn-action { padding: 0.5rem 0.85rem; font-size: 0.8rem; font-weight: 600; border-radius: 8px; cursor: pointer; border: none; font-family: inherit; white-space: nowrap; }
+    .btn-request { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+    .btn-insights { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .btn-competitor { background: var(--accent); color: #fff; }
+    .table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 10px; overflow: hidden; }
+    .table th, .table td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+    .table th { background: rgba(0,0,0,0.2); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    .table .num { text-align: right; }
+    .table .desc { max-width: 220px; }
+    .table strong { color: var(--text); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>Feature scoring, customer insights & competitor analysis</h1>
+    </header>
+    <main>
+      <div class="toolbar">
+        <div class="filters">
+          <select><option>All modules</option><option>Leave</option></select>
+          <select><option>Sort by score</option><option>Sort by name</option><option>Sort by module</option></select>
+        </div>
+        <div>
+          <button class="btn secondary">Recalculate scores</button>
+          <button class="btn primary">Add feature</button>
+        </div>
+      </div>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Module</th>
+            <th>Feature Name</th>
+            <th>Feature Description</th>
+            <th>Client Tiers</th>
+            <th class="num">Number of Client Requests</th>
+            <th>Requested Client(s)</th>
+            <th class="num">Score</th>
+            <th>Point of Contact</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Leave</td>
+            <td><strong>Blackout Period</strong></td>
+            <td class="desc">Dates when employees cannot apply for leave</td>
+            <td style="color:var(--muted);font-size:0.85rem">enterprise (2), professional (1)</td>
+            <td class="num">3</td>
+            <td>Acme Corp, Beta Inc</td>
+            <td class="num">7.0</td>
+            <td>john@example.com</td>
+            <td>
+              <div class="action-btns">
+                <button class="btn-action btn-request">+ Request</button>
+                <button class="btn-action btn-insights">Customer insights</button>
+                <button class="btn-action btn-competitor">Competitor analysis</button>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td>Recruitment</td>
+            <td><strong>Bulk Applicant Import</strong></td>
+            <td class="desc">Import candidates from CSV or ATS</td>
+            <td style="color:var(--muted);font-size:0.85rem">enterprise (1)</td>
+            <td class="num">1</td>
+            <td>—</td>
+            <td class="num">3.0</td>
+            <td>—</td>
+            <td>
+              <div class="action-btns">
+                <button class="btn-action btn-request">+ Request</button>
+                <button class="btn-action btn-insights">Customer insights</button>
+                <button class="btn-action btn-competitor">Competitor analysis</button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="color:var(--muted); margin-top:1rem; font-size:0.9rem">↑ Static preview. Run the app (npm run dev) for the live UI.</p>
+    </main>
+  </div>
+</body>
+</html>

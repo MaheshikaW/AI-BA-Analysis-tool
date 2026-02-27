@@ -1,0 +1,58 @@
+[
+  {
+    "name": "Leave Blackout Period",
+    "description": "A Leave Blackout Period is a configurable restriction that prevents employees from submitting or approving leave requests during specific dates or date ranges — ensuring full workforce availability during critical business periods.",
+    "module": "Leave",
+    "point_of_contact": "Renuk",
+    "requested_clients": ["Karisma", "Home Choice", "Vinneren MX", "Unique Travel", "Sandals", "LAPARKAN TRADING LIMITED", "Professional Eye Care", "Medimpex"]
+  },
+  {
+    "name": "First / mother / father name in LATAM",
+    "description": "Spanish name: first name, father's first surname, mother's first surname. Need to map and split for payroll (e.g. Sicoss); mother's surname optional, causing split issues when pushing to payroll.",
+    "module": "Employee Management",
+    "point_of_contact": "Renuk",
+    "requested_clients": ["Sicoss", "Puma"]
+  },
+  {
+    "name": "Ability to hide Corporate Directory",
+    "description": "Some clients don't want the Directory shown to all staff (contact details, etc.). Ability to hide the directory for employees. Changes should apply to both Web and Mobile App. Data privacy.",
+    "module": "Corporate Directory",
+    "point_of_contact": "Siddeek",
+    "requested_clients": ["BCM", "One Jar - Consona TECH", "Novelo Logistics", "Niagara"]
+  },
+  {
+    "name": "Time format throughout the system (AM/PM vs Military)",
+    "description": "US clients want AM/PM time instead of military time. Should be available under localization section.",
+    "module": "HR Admin",
+    "point_of_contact": "Renuk",
+    "requested_clients": ["Journey West", "Branch Communication", "Team Elmers"]
+  },
+  {
+    "name": "Annual Leave Proration & Rounding Rules",
+    "description": "When annual leave is prorated, fractional entitlements (e.g. 1.15 days) cannot be granted. Client wants prorated entitlement rounded to nearest half day (except Bulgaria: nearest full day).",
+    "module": "Leave",
+    "point_of_contact": "Siddeek",
+    "requested_clients": ["Action Global", "STATIN (similar)"]
+  },
+  {
+    "name": "Leave accruals based on hours worked",
+    "description": "Time worked (attendance/timesheets) used to generate vacation, sick leave, or lieu leave accruals. Need to define process for multi-team combined works. Ref. CA leave policies.",
+    "module": "Leave",
+    "point_of_contact": "Renuk",
+    "requested_clients": ["ADRA Canada", "KMO", "Team Elmers", "Pennsylvania Women Work", "Florida Guardian"]
+  },
+  {
+    "name": "Global admin should be able to unlock any blocked user",
+    "description": "Blocking for one hour causes panic and tickets; cannot remove block within an hour. Global admin should be able to remove the block to reduce unnecessary tickets. Many apps provide a way to recover.",
+    "module": "Login",
+    "point_of_contact": "Lakmal",
+    "requested_clients": ["Austere Systems Private Limited-ASPL"]
+  },
+  {
+    "name": "LDAP logs – see whether users use LDAP or normal auth",
+    "description": "When LDAP is enabled, cannot check whether it is really used. Improve logs to see whether users are using LDAP or normal authentication. Needed for troubleshooting and migration.",
+    "module": "Login",
+    "point_of_contact": "Lakmal",
+    "requested_clients": ["Internal Request"]
+  }
+]

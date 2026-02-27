@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    ports:
+      - "4080:4000"   # host:container — use 4000:4000 if port 4000 is free
+    env_file:
+      - backend/.env
+    environment:
+      - PORT=4000
+      - NODE_ENV=production
+    restart: unless-stopped
