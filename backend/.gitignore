@@ -1,3 +1,5 @@
 .env
 node_modules/
 data/*.db
+google-service-account.json
+team17-489202-67e125b5508e.json

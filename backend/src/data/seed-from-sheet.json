@@ -54,5 +54,12 @@
     "module": "Login",
     "point_of_contact": "Lakmal",
     "requested_clients": ["Internal Request"]
+  },
+  {
+    "name": "Ability to export users in the system along with their designated user roles",
+    "description": "The export feature gives organizations visibility, accountability, and compliance readiness regarding system access and user roles.",
+    "module": "Reports",
+    "point_of_contact": "Lakmal",
+    "requested_clients": ["MC Systems -CW & J Credit Union"]
   }
 ]
