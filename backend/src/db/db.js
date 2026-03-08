@@ -16,3 +16,16 @@ try {
     db.prepare('ALTER TABLE client_requests ADD COLUMN client_name TEXT').run();
   }
 } catch (_) {}
+
+// Ensure verdicts table exists (persist verdicts across restarts)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS verdicts (
+    feature_id INTEGER PRIMARY KEY,
+    verdict TEXT NOT NULL,
+    problem_real TEXT,
+    well_understood TEXT,
+    right_time TEXT,
+    next_steps TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+`);

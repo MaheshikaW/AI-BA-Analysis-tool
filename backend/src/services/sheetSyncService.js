@@ -6,6 +6,60 @@ import { config } from '../config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/** Fetch main dashboard tab via Sheets API (Feature, Requested Clients, etc.). Sheet must be shared with the service account. */
+async function fetchSheetRowsViaSheetsApi() {
+  const raw = config.google.credentialsPath;
+  if (!raw || !String(raw).trim()) return null;
+  const keyPath = path.resolve(process.cwd(), String(raw).trim());
+  if (!fs.existsSync(keyPath)) return null;
+  try {
+    const auth = new google.auth.GoogleAuth({
+      keyFile: keyPath,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+    });
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = config.sheet.id;
+    const gid = parseInt(config.sheet.gid, 10);
+    const meta = await sheets.spreadsheets.get({ spreadsheetId });
+    const tabList = meta.data.sheets || [];
+    const tab = tabList.find((s) => s.properties?.sheetId === gid) || tabList[0];
+    const title = tab?.properties?.title || `gid_${gid}`;
+    const range = `'${title.replace(/'/g, "''")}'!A:Z`;
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+    const rows = res.data.values || [];
+    if (rows.length < 2) return null;
+    const headers = (rows[0] || []).map((c) => String(c ?? '').trim());
+    const col = (name) => {
+      const want = name.toLowerCase().trim();
+      const i = headers.findIndex((h) => String(h).toLowerCase().trim() === want || String(h).toLowerCase().replace(/\s/g, '') === want.replace(/\s/g, ''));
+      return i >= 0 ? i : null;
+    };
+    const featureCol = col('Feature') ?? col('Feature Name') ?? 0;
+    const descCol = col('Feature Description') ?? col('Feature description') ?? null;
+    const moduleCol = col('Module') ?? col('Module Name') ?? col('Product Module') ?? null;
+    const pocCol = col('Point of Contact') ?? col('Point of contact') ?? col('POC') ?? null;
+    const clientsCol = col('Requested Clients') ?? col('Requested clients') ?? col('Requested Client(s)') ?? null;
+    const out = [];
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i] || [];
+      const name = String(row[featureCol] ?? '').trim();
+      if (!name) continue;
+      const clientsRaw = clientsCol != null ? String(row[clientsCol] ?? '').trim() : '';
+      out.push({
+        name,
+        description: descCol != null ? String(row[descCol] ?? '').trim() : '',
+        module: moduleCol != null ? String(row[moduleCol] ?? '').trim() : '',
+        point_of_contact: pocCol != null ? String(row[pocCol] ?? '').trim() : '',
+        requested_clients: splitRequestedClients(clientsRaw),
+      });
+    }
+    return out.length > 0 ? out : null;
+  } catch (e) {
+    console.warn('Main sheet via Sheets API failed:', e.message);
+    return null;
+  }
+}
+
 /** Fetch insights tab via Sheets API. Sheet must be shared with the service account email. Finds tab by gid or by title "Sample Client Insights". */
 async function fetchInsightsRowsViaSheetsApi() {
   const raw = config.google.credentialsPath;
@@ -176,7 +230,8 @@ export async function fetchSheetRows() {
   if (sheetCache.rows != null && now - sheetCache.at < SHEET_CACHE_TTL_MS) {
     return sheetCache.rows;
   }
-  const url = config.sheet.exportUrl;
+  const baseUrl = config.sheet.exportUrl;
+  const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}_=${now}`;
   try {
     const res = await fetch(url, { headers: SHEET_FETCH_HEADERS });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -198,13 +253,19 @@ export async function fetchSheetRows() {
       return out;
     }
   } catch (e) {
-    console.warn('Sheet fetch failed, using fallback seed:', e.message);
+    console.warn('Sheet fetch failed:', e.message);
+  }
+  const apiRows = await fetchSheetRowsViaSheetsApi();
+  if (apiRows && apiRows.length > 0) {
+    sheetCache = { rows: apiRows, at: now };
+    return apiRows;
   }
   const fallback = loadFallbackSeed();
   if (fallback.length > 0) sheetCache = { rows: fallback, at: now };
   return fallback;
 }
 
+/** Split by comma, semicolon, or newline only. Names containing " - " (e.g. "MC Systems - Home Choice Enterprise Limited") stay as one client. */
 function splitRequestedClients(raw) {
   if (!raw) return [];
   return raw
@@ -214,12 +275,52 @@ function splitRequestedClients(raw) {
 }
 
 /** Normalize client name for score lookup: trim, lowercase, collapse spaces. */
+/**
+ * Normalize client name for matching: fix mojibake, strip accents, all dashes to space, lowercase, collapse spaces.
+ * So "MC Systems - Home Choice" (hyphen) and "MC Systems – Home Choice" (en-dash) match, and "Consolidé - Puma" matches "ConsolidÃ© - Puma".
+ */
 function normalizeClientName(s) {
-  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  let t = (s || '').trim();
+  // Fix UTF-8-mojibake (e.g. sheet exported as Latin-1): "ConsolidÃ©" → "Consolidé"
+  try {
+    if (Buffer.isEncoding('latin1')) t = Buffer.from(t, 'latin1').toString('utf8');
+  } catch (_) {}
+  // Strip accents so "consolidé" and "consolide" match
+  t = t.normalize('NFD').replace(/\u0300-\u036f/g, '');
+  // All dash-like chars (hyphen, en-dash, em-dash, etc.) → space so "MC Systems - X" and "MC Systems – X" match
+  t = t.replace(/[\u002D\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, ' ');
+  t = t.toLowerCase().replace(/\s+/g, ' ').replace(/[.,;:_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return t;
 }
 
 /** Cache for Scoring Info (client name -> score). */
 let scoringCache = { map: null, at: 0 };
+
+/** Clear sheet and scoring caches so the next request refetches from the sheet. Call when user clicks Refresh. */
+export function clearSheetCaches() {
+  sheetCache = { rows: null, at: 0 };
+  scoringCache = { map: null, at: 0 };
+  insightsCache = { rows: null, at: 0 };
+}
+
+/**
+ * Parse Client Score column: number 1–9, or tier label.
+ * High-Platinum → 4, Tier3 → 3, Tier2/Gold → 2, Tier1/Silver → 1.
+ */
+function parseScoreOrTier(scoreStr) {
+  const n = parseInt(scoreStr, 10);
+  if (!Number.isNaN(n) && n >= 1 && n <= 9) return n;
+  const s = (scoreStr || '')
+    .toLowerCase()
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (/\bhigh[\s-]*platinum\b|(platinum.*high|high.*platinum)|^platinum$/.test(s)) return 4;
+  if (/tier\s*3|^3$/.test(s) && !/platinum|high/.test(s)) return 3;
+  if (/tier\s*2|tier2|gold|^2$/.test(s)) return 2;
+  if (/tier\s*1|tier1|silver|^1$/.test(s)) return 1;
+  return null;
+}
 
 /**
  * Fetch Scoring Info tab (Client Name, Client Score). Returns Map(normalizedClientName -> score).
@@ -241,10 +342,10 @@ export async function fetchScoringInfo(forceRefresh = false) {
     const map = new Map();
     for (const row of rows) {
       const name = getColumn(row, ['Client Name', 'Client', 'client name', 'client']).trim();
-      const scoreStr = getColumn(row, ['Client Score', 'Score', 'client score', 'score']);
+      const scoreStr = String(getColumn(row, ['Client Score', 'Score', 'client score', 'score'])).trim();
       if (!name) continue;
-      const score = parseInt(scoreStr, 10);
-      if (Number.isNaN(score) || score < 0) continue;
+      const score = parseScoreOrTier(scoreStr);
+      if (score == null || score < 0) continue;
       map.set(normalizeClientName(name), score);
     }
     scoringCache = { map, at: now };
@@ -285,25 +386,78 @@ export async function fetchInsightsRows(forceRefresh = false) {
   }
   if (forceRefresh) insightsCache = { rows: null, at: 0 };
 
-  const url = `https://docs.google.com/spreadsheets/d/${config.sheet.id}/export?format=csv&gid=${config.sheet.insightsGid}`;
+  const urlsToTry = [
+    config.sheet.insightsExportUrlCanonical,
+    ...(config.sheet.insightsPublishCsvUrl ? [config.sheet.insightsPublishCsvUrl] : []),
+    config.sheet.insightsExportUrl,
+  ].filter(Boolean);
   let text = null;
-  try {
-    const res = await fetch(url, { headers: SHEET_FETCH_HEADERS });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    text = await res.text();
-    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-    if (text.trimStart().startsWith('<')) throw new Error('Got HTML');
-  } catch (e) {
-    console.warn('Insights fetch failed:', e.message, e.cause?.message || '');
+  for (const url of urlsToTry) {
+    try {
+      const res = await fetch(url, { headers: SHEET_FETCH_HEADERS });
+      if (!res.ok) continue;
+      text = await res.text();
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+      if (text.trimStart().startsWith('<')) continue;
+      break;
+    } catch (e) {
+      continue;
+    }
+  }
+  if (!text || text.trimStart().startsWith('<')) {
+    const apiRows = await fetchInsightsRowsViaSheetsApi();
+    if (apiRows && apiRows.length > 0) {
+      const out = apiRows.map((r) => ({
+        feature: (r.feature || '').trim(),
+        client: (r.client || '').trim(),
+        insight: (r.insight || '').trim(),
+      })).filter((r) => (r.insight && r.insight.trim()) || (r.feature && r.feature.trim()));
+      insightsCache = { rows: out, at: now };
+      return out;
+    }
+    console.warn('Insights fetch failed: got HTML or no CSV from any URL. Publish the sheet to web (File → Share → Publish to web) or share the sheet with the service account email.');
     insightsCache = { rows: [], at: now };
     return [];
   }
   try {
-    const rows = parseCsv(text);
+    let rows = parseCsv(text);
+    if (rows.length > 2) {
+      const keys = Object.keys(rows[0] || {});
+      const looksLikeHeader = keys.some((k) => /client|insight|feature|quote|feedback/i.test(String(k)));
+      if (!looksLikeHeader && keys.length <= 2) {
+        const rawRows = parseCsvRows(text);
+        if (rawRows.length >= 3) {
+          const headerRow = rawRows[1].map((c) => String(c ?? '').trim());
+          rows = [];
+          for (let i = 2; i < rawRows.length; i++) {
+            const row = {};
+            headerRow.forEach((h, j) => {
+              row[h || `col_${j}`] = (rawRows[i][j] != null ? String(rawRows[i][j]) : '').trim();
+            });
+            rows.push(row);
+          }
+        }
+      }
+    }
     const firstColVal = (r) => {
       const k = Object.keys(r || {})[0];
       return k != null ? String(r[k] ?? '').trim() : '';
     };
+    const valsFromRow = (r) => Object.values(r || {}).map((v) => stripQuotes(String(v ?? '').trim()));
+    if (rows.length >= 2) {
+      const firstKeys = Object.keys(rows[0] || {});
+      const hasInsightCol = firstKeys.some((k) => /insight|quote|feedback/i.test(String(k)));
+      const hasClientCol = firstKeys.some((k) => /client|customer|company/i.test(String(k)));
+      if (!hasInsightCol && !hasClientCol && firstKeys.length >= 2) {
+        const firstVals = valsFromRow(rows[0]);
+        if (firstVals.some((v) => v.length > 50)) {
+          rows = rows.map((r, i) => {
+            const v = valsFromRow(r);
+            return { Client: v[0] || '', Insight: v[1] || '' };
+          });
+        }
+      }
+    }
     const out = rows
       .map((row) => {
         let featureVal =
@@ -319,17 +473,25 @@ export async function fetchInsightsRows(forceRefresh = false) {
             return { feature: featureVal, client: stripQuotes(parts[1]).trim(), insight: stripQuotes(parts[2]).trim() };
           }
         }
-        const vals = Object.values(row || {}).map((v) => stripQuotes(String(v ?? '').trim()));
+        const vals = valsFromRow(row);
         if ((!featureVal || !clientVal) && vals.length >= 3 && vals[0]) {
           featureVal = featureVal || vals[0];
           clientVal = clientVal || vals[1] || '';
           insightVal = insightVal || vals[2] || '';
         }
-        return { feature: featureVal, client: clientVal, insight: insightVal };
+        if (vals.length >= 2 && (!insightVal || !clientVal)) {
+          if (!clientVal && vals[0]) clientVal = vals[0];
+          if (!insightVal && vals[1]) insightVal = vals[1];
+        }
+        if (!insightVal && (featureVal || clientVal)) {
+          const byLen = vals.filter(Boolean).sort((a, b) => b.length - a.length);
+          if (byLen[0] && byLen[0].length > 20) insightVal = byLen[0];
+        }
+        return { feature: (featureVal || '').trim(), client: clientVal, insight: insightVal };
       })
-      .filter((r) => (r.feature && (r.feature = r.feature.trim())));
+      .filter((r) => (r.insight && r.insight.trim()) || (r.feature && (r.feature = r.feature.trim())));
     if (rows.length > 1 && out.length === 0) {
-      console.warn('Insights sheet: parsed', rows.length, 'rows but none had a Feature column. First row keys:', Object.keys(rows[0] || {}));
+      console.warn('Insights sheet: parsed', rows.length, 'rows but none had Insight or Feature. First row keys:', Object.keys(rows[0] || {}));
     }
     insightsCache = { rows: out, at: now };
     return out;
@@ -341,28 +503,79 @@ export async function fetchInsightsRows(forceRefresh = false) {
 }
 
 /**
- * Return rows in database-like shape: id, weighted_score, total_requests, tier_breakdown, requested_clients (string).
- * If clientScoreMap is provided, weighted_score = sum of (Client Score from Scoring Info) per requesting client.
+ * Per-feature score (when tierTotals and tierWeightsByScore are set):
+ *   Demand Rate(tier) = requests for this feature from that tier / total clients in that tier
+ *   Weighted Score = Σ ( Demand Rate × tier_weight ) → normalized to 100
+ * If config is missing, falls back to sum of tier scores per request.
  */
 export function rowsToFeatureList(rows, clientScoreMap = null) {
-  return rows.map((r, i) => {
+  const tierTotals = config.scoring.tierTotals && typeof config.scoring.tierTotals === 'object' ? config.scoring.tierTotals : null;
+  const tierWeightsByScore = config.scoring.tierWeightsByScore && typeof config.scoring.tierWeightsByScore === 'object' ? config.scoring.tierWeightsByScore : null;
+  const simpleScoreMode = config.scoring.simpleScoreMode === true;
+  const useDemandRate = !simpleScoreMode && tierTotals && tierWeightsByScore && Object.keys(tierTotals).length > 0 && Object.keys(tierWeightsByScore).length > 0;
+
+  const scoreToTierName = (score) => {
+    const n = Number(score);
+    if (n === 4) return 'High-Platinum';
+    if (n === 3) return 'Tier3';
+    if (n === 2) return 'Tier2';
+    if (n === 1) return 'Tier1';
+    return `Tier${n}`;
+  };
+  const list = rows.map((r, i) => {
     const requested = r.requested_clients || [];
     const count = requested.length;
     const requested_clients_str = requested.join(', ');
     let weighted_score = count;
     let tier_breakdown = count ? JSON.stringify({ professional: { requests: count, weight: 1 } }) : null;
-    if (clientScoreMap && count > 0) {
-      let sum = 0;
-      const byTier = {};
+    const requested_clients_with_tier = [];
+    let rawScore = count;
+    let sum = 0;
+    const byTier = {};
+    if (clientScoreMap && clientScoreMap.size > 0 && count > 0) {
       for (const clientName of requested) {
-        const score = clientScoreMap.get(normalizeClientName(clientName)) ?? 1;
+        const normalized = normalizeClientName(clientName);
+        let score = clientScoreMap.get(normalized);
+        // If request is "MC Systems - Home Choice Enterprise Limited" and sheet has "Home Choice Enterprise Limited" as Tier1, use Tier1
+        const homeChoiceKey = 'home choice enterprise limited';
+        if (normalized.includes(homeChoiceKey)) {
+          const homeChoiceScore = clientScoreMap.get(homeChoiceKey);
+          if (homeChoiceScore === 1) score = 1;
+        }
+        if (score == null && normalized) {
+          let bestKey = null;
+          let bestKeyLen = -1;
+          for (const [key, val] of clientScoreMap) {
+            if (!key.includes(normalized) && !normalized.includes(key)) continue;
+            if (key.length > bestKeyLen) {
+              bestKeyLen = key.length;
+              bestKey = key;
+            }
+          }
+          if (bestKey != null) score = clientScoreMap.get(bestKey);
+        }
+        score = score ?? 2;
+        requested_clients_with_tier.push({ client: clientName, tier: scoreToTierName(score) });
         sum += score;
         const key = `score_${score}`;
         if (!byTier[key]) byTier[key] = { requests: 0, weight: score };
         byTier[key].requests += 1;
       }
-      weighted_score = sum;
+      if (!useDemandRate) {
+        weighted_score = sum;
+      } else {
+        rawScore = 0;
+        for (const [key, data] of Object.entries(byTier)) {
+          const scoreNum = data.weight;
+          const requests = data.requests ?? 0;
+          const totalInTier = Number(tierTotals[scoreNum] ?? tierTotals[String(scoreNum)]) || 0;
+          const weight = Number(tierWeightsByScore[scoreNum] ?? tierWeightsByScore[String(scoreNum)]) || 0;
+          if (totalInTier > 0) rawScore += (requests / totalInTier) * weight;
+        }
+      }
       tier_breakdown = JSON.stringify(byTier);
+    } else if (count > 0) {
+      requested.forEach((clientName) => requested_clients_with_tier.push({ client: clientName, tier: '—' }));
     }
     return {
       id: i + 1,
@@ -370,10 +583,29 @@ export function rowsToFeatureList(rows, clientScoreMap = null) {
       name: r.name,
       description: r.description || null,
       point_of_contact: r.point_of_contact || null,
-      weighted_score,
+      weighted_score: useDemandRate ? rawScore : weighted_score,
+      _rawScore: (useDemandRate || simpleScoreMode) ? (useDemandRate ? rawScore : (sum || 0)) : undefined,
       total_requests: count,
       tier_breakdown,
       requested_clients: requested_clients_str || null,
+      requested_clients_with_tier: requested_clients_with_tier.length ? requested_clients_with_tier : null,
     };
   });
+
+  const doNormalize = (useDemandRate || simpleScoreMode) && config.scoring.normalizeTo100 !== false;
+  if (doNormalize) {
+    const maxRaw = Math.max(...list.map((f) => f._rawScore ?? 0), 0);
+    for (const f of list) {
+      f.weighted_score = maxRaw > 0 ? 100 * ((f._rawScore ?? 0) / maxRaw) : 0;
+      delete f._rawScore;
+    }
+  } else if (useDemandRate || simpleScoreMode) {
+    for (const f of list) {
+      let raw = f._rawScore ?? 0;
+      if (useDemandRate && raw > 0 && raw < 1) raw = raw * 1000;
+      f.weighted_score = raw;
+      delete f._rawScore;
+    }
+  }
+  return list;
 }

@@ -34,7 +34,7 @@
           <th>Feature Name</th>
           <th>Feature Description</th>
           <th>Client Tiers</th>
-          <th class="num">Number of Client Requests</th>
+          <th class="num">Request Count</th>
           <th>Requested Client(s)</th>
           <th class="num">Score</th>
           <th>Verdict</th>
@@ -48,9 +48,13 @@
           <td>{{ f.module || '—' }}</td>
           <td><strong>{{ f.name }}</strong></td>
           <td class="desc-cell" :title="f.description || '—'"><span class="desc">{{ f.description || '—' }}</span></td>
-          <td class="tiers-cell" :title="formatClientTiers(f.tier_breakdown)"><span class="tiers">{{ formatClientTiers(f.tier_breakdown) }}</span></td>
+          <td class="tiers-cell" :title="tierListTitle(f)">
+            <span class="cell-clamp-text tiers-text">{{ tierDisplayText(f) }}</span>
+          </td>
           <td class="num">{{ f.total_requests ?? 0 }}</td>
-          <td class="requested-cell" :title="f.requested_clients || '—'"><span class="requested-clients">{{ f.requested_clients || '—' }}</span></td>
+          <td class="requested-cell" :title="requestedClientsList(f.requested_clients).join('\n') || '—'">
+            <span class="cell-clamp-text requested-text">{{ requestedDisplayText(f.requested_clients) }}</span>
+          </td>
           <td class="num">{{ formatScore(f.weighted_score) }}</td>
           <td class="verdict-cell">
             <button type="button" class="btn-verdict" :class="getVerdictClass(f.id)" @click="openVerdictModal(f)">
@@ -61,10 +65,12 @@
           <td class="actions-col">
             <div class="action-btns">
               <button type="button" class="btn-action btn-insights" @click="openInsightsModal(f)">
-                Customer insights
+                <svg class="btn-icon icon-insights" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M16,22.735l-0.036-0.722l0.066,0.003c0.592-0.002,1.206-0.096,1.793-0.282l0.217,0.686C17.383,22.629,16.696,22.735,16,22.735z M16,25.36c-10.296,0-14.292-9.127-14.332-9.22c-0.038-0.09-0.038-0.191,0-0.281C1.708,15.767,5.704,6.64,16,6.64s14.292,9.127,14.331,9.219c0.038,0.09,0.038,0.191,0,0.281C30.292,16.233,26.296,25.36,16,25.36z M20.36,16c0-2.007-1.633-3.64-3.64-3.64s-3.64,1.633-3.64,3.64s1.633,3.64,3.64,3.64S20.36,18.007,20.36,16z"/></svg>
+                Client Insights
               </button>
               <button class="btn-action btn-competitor" @click="goToCompetitorAnalysis(f)">
-                Competitor analysis
+                <svg class="btn-icon" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 9.9c-4.6 0.9-6 2.3-6.9 6.9c-0.9-4.6-2.3-6-6.9-6.9C8.7 9 10.1 7.6 11 3C11.9 7.6 13.3 9 17.9 9.9z"/><path d="M21.8 25c-3.2 0.6-4.1 1.6-4.8 4.8c-0.6-3.2-1.6-4.1-4.8-4.8c3.2-0.6 4.1-1.6 4.8-4.8C17.6 23.4 18.6 24.4 21.8 25z"/><path d="M29 15c-2.6 0.5-3.4 1.3-3.9 3.9c-0.5-2.6-1.3-3.4-3.9-3.9c2.6-0.5 3.4-1.3 3.9-3.9C25.6 13.7 26.4 14.5 29 15z"/></svg>
+                In Depth Analysis
               </button>
             </div>
           </td>
@@ -94,6 +100,11 @@
       </div>
       <div class="modal-body">
         <div v-if="insightsModalLoading" class="modal-loading">Loading…</div>
+        <div v-else-if="!insightsModalInsights.length" class="modal-empty">
+          <p>No insights found for this feature.</p>
+          <p v-if="insightsModalMeta?.sheetRowCount != null" class="modal-empty-hint">Sheet has {{ insightsModalMeta.sheetRowCount }} row(s). Insights are matched by meaning (AI). Publish the Sample Client Insights tab to web if the list is empty.</p>
+          <p v-else class="modal-empty-hint">Publish the workbook (File → Share → Publish to web) so the Sample Client Insights tab can be read.</p>
+        </div>
         <div v-else class="insights-list">
           <div v-for="(item, i) in insightsModalInsights" :key="i" class="insight-item">
             <strong class="insight-client">{{ item.client || '—' }}</strong>
@@ -117,7 +128,7 @@
   <div v-if="verdictModalOpen" class="modal-overlay" @click.self="closeVerdictModal">
     <div class="modal-card verdict-modal">
       <div class="modal-header">
-        <h3>Verdict – {{ verdictModalFeature?.name || '…' }}</h3>
+        <h3>Feature – {{ verdictModalFeature?.name || '…' }}</h3>
         <button type="button" class="modal-close" aria-label="Close" @click="closeVerdictModal">×</button>
       </div>
       <div class="modal-body">
@@ -133,13 +144,14 @@
           </div>
           <div class="verdict-next-steps">
             <strong>Suggested next steps for BAs:</strong>
-            <p class="next-steps-text">{{ verdictModalData.nextSteps }}</p>
+            <div class="next-steps-list">
+              <div v-for="(step, i) in nextStepsLines(verdictModalData.nextSteps)" :key="i" class="next-steps-line">{{ step }}</div>
+            </div>
           </div>
         </template>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn secondary" @click="closeVerdictModal">Close</button>
-        <button type="button" class="btn secondary" @click="refreshVerdictModal" :disabled="verdictModalLoading">Re-assess</button>
       </div>
     </div>
   </div>
@@ -188,13 +200,14 @@ const paginationTo = computed(() => Math.min(currentPage.value * PAGE_SIZE, feat
 const SHEET_POLL_INTERVAL = 5 * 60 * 1000; // 5 minutes
 let sheetPollTimer = null;
 
-async function load(silent = false) {
+async function load(silent = false, forceRefresh = false) {
   if (!silent) loading.value = true;
   if (!silent) error.value = '';
   try {
     const params = {};
     if (filterModule.value) params.module = filterModule.value;
     if (sort.value) params.sort = sort.value;
+    if (forceRefresh) params.refresh = '1';
     features.value = await api.getFeatures(params);
     currentPage.value = 1;
     if (!modules.value.length) {
@@ -250,6 +263,16 @@ function formatScore(v) {
   return Number.isFinite(n) ? n.toFixed(1) : '0';
 }
 
+/** Split next steps string into lines for display (by newlines, or by " 2. " / " 3. " if one line). */
+function nextStepsLines(text) {
+  if (text == null || text === '') return [];
+  const s = String(text).trim();
+  const byNewline = s.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (byNewline.length > 1) return byNewline;
+  const byNumber = s.split(/\s+(?=\d+\.\s+)/).map((l) => l.trim()).filter(Boolean);
+  return byNumber.length > 1 ? byNumber : [s];
+}
+
 /** CSS class for verdict button/label color from verdict text. */
 function getVerdictClassFromLabel(label) {
   const s = (label || '').toLowerCase();
@@ -292,43 +315,97 @@ function closeVerdictModal() {
   verdictModalData.value = null;
 }
 
-function refreshVerdictModal() {
-  if (!verdictModalFeature.value) return;
-  const key = String(verdictModalFeature.value.id);
-  verdictModalLoading.value = true;
-  api.getFeatureVerdict(verdictModalFeature.value.id, true)
-    .then((data) => {
-      verdictModalData.value = data;
-      const label = (data && data.verdict) ? String(data.verdict).trim() : null;
-      if (label) {
-        verdictCache.value[key] = data;
-        verdictLabels.value = { ...verdictLabels.value, [key]: label };
-      }
-    })
-    .finally(() => {
-      verdictModalLoading.value = false;
-    });
+/** Map internal tier keys to display names (High-Platinum, Tier1–3). */
+const TIER_DISPLAY_NAMES = {
+  enterprise: 'High-Platinum',
+  professional: 'Tier2',
+  starter: 'Tier1',
+  score_4: 'High-Platinum',
+  score_3: 'Tier3',
+  score_2: 'Tier2',
+  score_1: 'Tier1',
+};
+
+function tierToDisplayName(key) {
+  if (!key || typeof key !== 'string') return key;
+  const k = key.toLowerCase().trim();
+  if (TIER_DISPLAY_NAMES[k]) return TIER_DISPLAY_NAMES[k];
+  const scoreMatch = k.match(/^score_(\d+)$/);
+  if (scoreMatch) {
+    const n = scoreMatch[1];
+    return n === '4' ? 'High-Platinum' : `Tier${n}`;
+  }
+  return k.charAt(0).toUpperCase() + k.slice(1);
 }
 
+/** Display order for tier keys: High-Platinum first, then Tier2, Tier1, then enterprise/professional/starter, then rest. */
+const TIER_ORDER = ['score_4', 'score_3', 'score_2', 'score_1', 'enterprise', 'professional', 'starter'];
+
 function formatClientTiers(tierBreakdown) {
-  if (!tierBreakdown) return '—';
+  const lines = formatClientTiersLines(tierBreakdown);
+  return lines.length ? lines.join(', ') : '—';
+}
+
+/** Same as formatClientTiers but returns an array (one string per tier line) for display on new lines. */
+function formatClientTiersLines(tierBreakdown) {
+  if (!tierBreakdown) return [];
   try {
     const o = typeof tierBreakdown === 'string' ? JSON.parse(tierBreakdown) : tierBreakdown;
-    const parts = Object.entries(o).map(([tier, data]) => {
-      const reqs = data?.requests ?? data;
-      return `${tier} (${reqs})`;
+    const entries = Object.entries(o);
+    const reqsFor = (data) => {
+      if (data != null && typeof data === 'object' && 'requests' in data) return data.requests;
+      if (typeof data === 'number') return data;
+      return 0;
+    };
+    const sorted = entries.slice().sort(([a], [b]) => {
+      const ia = TIER_ORDER.indexOf(a.toLowerCase());
+      const ib = TIER_ORDER.indexOf(b.toLowerCase());
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return a.localeCompare(b);
     });
-    return parts.length ? parts.join(', ') : '—';
+    return sorted.map(([tier, data]) => {
+      const reqs = reqsFor(data);
+      return `${tierToDisplayName(tier)} (${reqs})`;
+    });
   } catch {
-    return '—';
+    return [];
   }
+}
+
+/** Split requested clients string into array (by comma, semicolon, newline) for one-per-line display. */
+function requestedClientsList(str) {
+  if (!str || typeof str !== 'string') return [];
+  return str.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
+}
+
+/** Tier list as newline-separated text for display (2-line clamp + ellipsis). */
+function tierDisplayText(f) {
+  const withTier = f.requested_clients_with_tier || [];
+  if (withTier.length) return withTier.map((item) => item.tier).join('\n');
+  const lines = formatClientTiersLines(f.tier_breakdown);
+  return lines.length ? lines.join('\n') : '—';
+}
+
+/** Full tier list for hover title (one per line; same behaviour as Requested Client(s) hover). */
+function tierListTitle(f) {
+  const withTier = f.requested_clients_with_tier || [];
+  if (withTier.length) return withTier.map((item) => `${item.tier}: ${item.client}`).join('\n');
+  return formatClientTiersLines(f.tier_breakdown).join('\n') || formatClientTiers(f.tier_breakdown) || '—';
+}
+
+/** Requested clients as newline-separated text for display (2-line clamp + ellipsis). */
+function requestedDisplayText(str) {
+  const list = requestedClientsList(str);
+  return list.length ? list.join('\n') : '—';
 }
 
 async function recalculateScores() {
   recalculating.value = true;
   try {
     await api.recalculateScores();
-    await load();
+    await load(false, true);
   } catch (e) {
     error.value = e.message || 'Refresh failed';
   } finally {
@@ -342,7 +419,7 @@ async function openInsightsModal(f) {
   insightsModalInsights.value = [];
   insightsModalLoading.value = true;
   try {
-    const data = await api.getFeatureInsights(f.id, true);
+    const data = await api.getInsightsByContext({ name: f.name, description: f.description || '' }, true);
     insightsModalInsights.value = data.insights || [];
     insightsModalMeta.value = data._meta || null;
   } catch (e) {
@@ -355,10 +432,11 @@ async function openInsightsModal(f) {
 }
 
 async function refreshInsightsModal() {
-  if (!insightsModalFeature.value) return;
+  const f = insightsModalFeature.value;
+  if (!f) return;
   insightsModalLoading.value = true;
   try {
-    const data = await api.getFeatureInsights(insightsModalFeature.value.id, true);
+    const data = await api.getInsightsByContext({ name: f.name, description: f.description || '' }, true);
     insightsModalInsights.value = data.insights || [];
     insightsModalMeta.value = data._meta || null;
     error.value = '';
@@ -407,13 +485,14 @@ onUnmounted(stopSheetPolling);
 .btn.accent { background: var(--accent); color: #fff; }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .action-btns { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
-.btn-action { padding: 0.5rem 0.85rem; font-size: 0.8rem; font-weight: 600; border-radius: 8px; cursor: pointer; border: none; font-family: inherit; white-space: nowrap; transition: background 0.15s, color 0.15s; text-decoration: none; display: inline-block; }
+.btn-action { padding: 0.5rem 0.85rem; font-size: 0.8rem; font-weight: 600; border-radius: 8px; cursor: pointer; border: none; font-family: inherit; white-space: nowrap; transition: background 0.15s, color 0.15s; text-decoration: none; display: inline-flex; align-items: center; gap: 0.4rem; }
+.btn-action .btn-icon { width: 1.1em; height: 1.1em; flex-shrink: 0; }
 a.btn-action { color: inherit; }
 .btn-action:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-request { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
 .btn-request:hover:not(:disabled) { background: var(--border); }
-.btn-insights { background: transparent; color: var(--muted); border: 1px solid var(--border); }
-.btn-insights:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,0.05); }
+.btn-insights { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.5); }
+.btn-insights:hover:not(:disabled) { color: #fff; background: rgba(255,255,255,0.1); }
 .btn-competitor { background: var(--accent); color: #fff; }
 .btn-competitor:hover:not(:disabled) { background: var(--accent-dim); }
 .message { padding: 0.75rem; border-radius: var(--radius); }
@@ -425,12 +504,12 @@ a.btn-action { color: inherit; }
 .table th { background: rgba(0,0,0,0.2); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .table .num { text-align: right; }
 .table th:nth-child(1) { width: 4%; }   /* ID */
-.table th:nth-child(2) { width: 6%; }   /* Module */
+.table th:nth-child(2) { width: 10%; }  /* Module */
 .table th:nth-child(3) { width: 11%; }  /* Feature Name */
-.table th:nth-child(4) { width: 28%; }  /* Feature Description */
+.table th:nth-child(4) { width: 25%; }  /* Feature Description */
 .table th:nth-child(5) { width: 9%; }  /* Client Tiers */
-.table th:nth-child(6) { width: 5%; }   /* Number of Client Requests */
-.table th:nth-child(7) { width: 13%; }  /* Requested Client(s) */
+.table th:nth-child(6) { width: 9%; }   /* Request Count */
+.table th:nth-child(7) { width: 12%; }  /* Requested Client(s) */
 .table th:nth-child(8) { width: 4%; }   /* Score */
 .table th:nth-child(9) { width: 10%; }  /* Verdict */
 .table th:nth-child(10) { width: 7%; }  /* Point of Contact */
@@ -446,10 +525,16 @@ a.btn-action { color: inherit; }
 .btn-verdict.verdict-review { background: rgba(148,163,184,0.2); color: #cbd5e1; border-color: rgba(148,163,184,0.4); }
 .table .desc-cell { overflow: hidden; }
 .table .desc { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: help; line-height: 1.4; word-break: break-word; }
-.table .tiers-cell { overflow: hidden; cursor: help; }
-.table .tiers { font-size: 0.85rem; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; line-height: 1.35; }
+/* Client Tiers and Requested Client(s): max 2 lines, ellipsis when truncated, full list on hover */
+.table .tiers-cell,
 .table .requested-cell { overflow: hidden; cursor: help; }
-.table .requested-clients { font-size: 0.9rem; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; line-height: 1.35; }
+.table .cell-clamp-text { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; word-break: break-word; line-height: 1.35; }
+.table .cell-clamp-text.tiers-text { font-size: 0.85rem; color: var(--muted); }
+.table .cell-clamp-text.requested-text { font-size: 0.9rem; }
+.table .cell-lines { display: flex; flex-direction: column; gap: 0.2rem; }
+.table .cell-line { font-size: inherit; line-height: 1.35; word-break: break-word; }
+.table .cell-line.tiers { font-size: 0.85rem; color: var(--muted); }
+.table .cell-line.requested-clients { font-size: 0.9rem; }
 .table .actions-col .action-btns { max-width: 100%; }
 .pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; margin-top: 1rem; padding: 0.75rem 0; border-top: 1px solid var(--border); }
 .pagination-info { font-size: 0.9rem; color: var(--muted); }
@@ -466,6 +551,9 @@ a.btn-action { color: inherit; }
 .modal-body { padding: 1.25rem; overflow-y: auto; flex: 1; }
 .modal-loading { color: var(--muted); text-align: center; padding: 1.5rem; }
 .modal-empty { color: var(--muted); margin: 0; font-size: 0.9rem; }
+.modal-empty p { margin: 0 0 0.5rem 0; }
+.modal-empty p:last-child { margin-bottom: 0; }
+.modal-empty-hint { font-size: 0.85rem; opacity: 0.9; }
 .modal-empty .btn-link { background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; font-size: inherit; font-family: inherit; }
 .modal-empty .btn-link:hover { color: var(--text); }
 .insights-list { display: flex; flex-direction: column; gap: 1rem; }
@@ -489,5 +577,7 @@ a.btn-action { color: inherit; }
 .verdict-q p { margin: 0; font-size: 0.9rem; color: var(--muted); line-height: 1.45; white-space: pre-wrap; }
 .verdict-next-steps { padding: 0.75rem; background: rgba(249,115,22,0.08); border-radius: var(--radius); border-left: 3px solid var(--accent); }
 .verdict-next-steps strong { font-size: 0.9rem; }
-.next-steps-text { margin: 0.5rem 0 0 0; font-size: 0.9rem; color: var(--text); line-height: 1.5; white-space: pre-wrap; }
+.next-steps-list { margin: 0.5rem 0 0 0; }
+.next-steps-line { font-size: 0.9rem; color: var(--text); line-height: 1.5; margin-bottom: 0.35rem; }
+.next-steps-line:last-child { margin-bottom: 0; }
 </style>

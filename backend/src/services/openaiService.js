@@ -32,6 +32,7 @@ Reply in JSON only, one key per competitor, e.g. {"BambooHR":"Time Off Restricti
     model: 'gpt-4o-mini',
     messages: [{ role: 'user', content: prompt }],
     response_format: { type: 'json_object' },
+    temperature: 0,
   });
   const text = completion.choices[0]?.message?.content || '{}';
   let parsed = {};
@@ -61,6 +62,7 @@ export async function generateCompetitorAnalysis(featureName, featureDescription
         name,
         term,
         howItWorks: `Configured under their Time Off / Leave settings. (Stub: add OPENAI_API_KEY for real analysis.)`,
+        helpArticles: [],
         helpArticleTitle: null,
         helpArticleUrl: null,
         helpSearchQuery: `${name} ${term} help`,
@@ -77,21 +79,22 @@ Description: ${featureDescription}
 Competitors to analyze: ${COMPETITORS.join(', ')}
 
 1. For each competitor, give the exact or closest feature name/term they use (e.g. "Time Off Restrictions").
-2. For each competitor: write 1-2 sentences on how that product implements this capability; set helpArticleTitle (short doc page title), helpSearchQuery (search phrase to find their doc); set helpArticleUrl to "" unless you know the exact https URL.
+2. For each competitor: write 1-2 sentences on how that product implements this capability. Provide up to 2 official help/documentation article links in helpArticles: [{"title": "short page title", "url": "https://exact-doc-url"}]. When you know the exact documentation URL (e.g. from knowledge of BambooHR, Workday, SAP docs), always include it—users need these links. Use "" for url only when you truly do not know the URL. Set helpSearchQuery to a search phrase to find their doc.
 
 3. Add "similarities": array of 2-5 short bullet points on how OrangeHRM and these competitors are similar for this feature.
 4. Add "differences": array of 2-5 short bullet points on how they differ (scope, configuration, terminology).
 
 Reply in JSON only with this exact structure:
 { "similarities": ["...", "..."], "differences": ["...", "..."], "competitors": [
-  { "name": "BambooHR", "term": "their feature name", "howItWorks": "1-2 sentences", "helpArticleTitle": "Doc title", "helpArticleUrl": "https://... or \"\"", "helpSearchQuery": "BambooHR ... documentation" }
+  { "name": "BambooHR", "term": "their feature name", "howItWorks": "1-2 sentences", "helpArticles": [{"title": "Doc title 1", "url": "https://..."}, {"title": "Doc title 2", "url": "https://..."}], "helpSearchQuery": "BambooHR ... documentation" }
 ] }
-Include all competitors: ${COMPETITORS.join(', ')}. Required: similarities, differences, and for each competitor: name, term, howItWorks, helpArticleTitle, helpSearchQuery.`;
+Include all competitors: ${COMPETITORS.join(', ')}. For each competitor provide up to 2 help article links in helpArticles (use \"\" for url if unknown). Required: similarities, differences, and for each competitor: name, term, howItWorks, helpArticles, helpSearchQuery.`;
 
   const completion = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [{ role: 'user', content: prompt }],
     response_format: { type: 'json_object' },
+    temperature: 0,
   });
   const text = completion.choices[0]?.message?.content || '{}';
   let data = { competitors: [] };
@@ -100,14 +103,37 @@ Include all competitors: ${COMPETITORS.join(', ')}. Required: similarities, diff
   } catch {
     data = { competitors: [], raw: text };
   }
+  const isHttpUrl = (s) => {
+    const u = (s && String(s).trim()) || '';
+    return u && (u.toLowerCase().startsWith('http://') || u.toLowerCase().startsWith('https://'));
+  };
   const competitors = (data.competitors || []).map((c) => {
     const name = c.name || '';
     const term = c.term || '';
     const fallbackQuery = `${name} ${term} documentation`.trim();
+    const rawArticles = Array.isArray(c.helpArticles) ? c.helpArticles : [];
+    const fromArray = rawArticles
+      .slice(0, 2)
+      .map((a) => {
+        const title = (a && (a.title ?? a.Title)) && String(a.title ?? a.Title).trim() ? String(a.title ?? a.Title).trim() : 'Help article';
+        const urlRaw = a && (a.url ?? a.URL ?? a.Url);
+        const url = urlRaw && isHttpUrl(urlRaw) ? String(urlRaw).trim() : null;
+        return { title, url };
+      })
+      .filter((a) => a.url);
+    const legacyUrl = c.helpArticleUrl && isHttpUrl(c.helpArticleUrl) ? String(c.helpArticleUrl).trim() : null;
+    const legacyTitle = c.helpArticleTitle && String(c.helpArticleTitle).trim() ? c.helpArticleTitle : 'Help article';
+    const helpArticles = [...fromArray];
+    if (legacyUrl && !helpArticles.some((a) => a.url === legacyUrl)) {
+      helpArticles.push({ title: legacyTitle, url: legacyUrl });
+    }
+    const helpArticlesFinal = helpArticles.slice(0, 2);
+    const first = helpArticlesFinal[0];
     return {
       ...c,
-      helpArticleTitle: c.helpArticleTitle && String(c.helpArticleTitle).trim() ? c.helpArticleTitle : 'Search docs',
-      helpArticleUrl: c.helpArticleUrl && String(c.helpArticleUrl).startsWith('http') ? c.helpArticleUrl : null,
+      helpArticles: helpArticlesFinal,
+      helpArticleTitle: (first && first.title) || legacyTitle,
+      helpArticleUrl: (first && first.url) || legacyUrl,
       helpSearchQuery: c.helpSearchQuery && String(c.helpSearchQuery).trim() ? c.helpSearchQuery : fallbackQuery,
     };
   });
@@ -313,7 +339,7 @@ Which of those sheet labels (by number) refer to THE SAME feature as the dashboa
 /**
  * Use AI to match insights by meaning: given a feature and full insight rows (with client + insight text),
  * return the 0-based indices of rows that are about this feature. Uses the meaning of the insight text,
- * not just the "Feature" label, so different wording still matches.
+ * not the "Feature" column (which may be a source like "AI Ideas for OrangeHRM - Team 17").
  */
 export async function matchInsightsByMeaning(featureName, featureDescription, insightRows) {
   if (!openai || !insightRows?.length) return [];
@@ -321,22 +347,22 @@ export async function matchInsightsByMeaning(featureName, featureDescription, in
   const list = insightRows.slice(0, 80).map((r, i) => {
     const feat = (r.feature || '').trim() || '—';
     const client = (r.client || '').trim() || '—';
-    const insight = (r.insight || '').trim().slice(0, 400) || '—';
-    return `[${i}] Feature: ${feat} | Client: ${client} | Insight: ${insight}`;
+    const insight = (r.insight || '').trim().slice(0, 600) || '—';
+    return `[${i}] Source/Feature: ${feat} | Client: ${client} | Insight: ${insight}`;
   }).join('\n');
 
-  const prompt = `You are matching client insights to an HR product feature by meaning.
+  const prompt = `You are matching client insights to an OrangeHRM product feature by the MEANING of the insight text.
 
-Dashboard feature:
+Dashboard feature (from the product):
 Name: ${featureName}
 Description: ${featureDescription}
 
-Below are rows from a "Client Insights" sheet. Each row has: Feature (label), Client, Insight (quote from a client). Decide which rows are about THE SAME feature/capability as the dashboard feature above, using the meaning of the Insight text (not only the Feature label). Include every row where the client is clearly talking about this capability.
+Below are rows from a Client Insights sheet. The "Source/Feature" column may be a team or source name (e.g. "AI Ideas for OrangeHRM - Team 17"), not the product feature name. Use ONLY the "Insight" text (the client quote) to decide which rows are about the SAME capability as the dashboard feature above. Include every row where the insight clearly describes this feature (e.g. leave blackouts, overlapping absences → Leave/Blackout feature).
 
 Rows (index in brackets):
 ${list}
 
-Reply with a JSON object: { "matchIndices": [0, 1, 3] } — the 0-based indices of rows that match. If none match, use { "matchIndices": [] }. No other text.`;
+Reply with a JSON object: { "matchIndices": [0, 1, 3] } — the 0-based indices of rows whose Insight text matches this feature. If none match, use { "matchIndices": [] }. No other text.`;
 
   try {
     const completion = await openai.chat.completions.create({
@@ -379,7 +405,7 @@ Description: ${featureDescription || 'No description provided.'}
 2. Is it well enough understood to scope? (Yes/No/Unclear + 1–2 sentence explanation)
 3. Is it the right time to solve it? (Yes/No/Unclear + 1–2 sentence explanation)
 
-Then set a verdict: "Clear to proceed" (all three are clearly Yes), "Needs clarity" (one or more Unclear/No that BAs can resolve), or "Not right time" (right time is No). Suggest 1–3 concrete next steps for BAs.
+Then set a verdict: "Clear to proceed" (all three are clearly Yes), "Needs clarity" (one or more Unclear/No that BAs can resolve), or "Not right time" (right time is No). Suggest 1–3 concrete next steps for BAs. Put each next step on its own line (use newlines between steps).
 
 Reply with JSON only:
 {
@@ -387,7 +413,7 @@ Reply with JSON only:
   "problemReal": "your answer for question 1",
   "wellUnderstood": "your answer for question 2",
   "rightTime": "your answer for question 3",
-  "nextSteps": "1. ... 2. ... 3. ..."
+  "nextSteps": "1. ... 2. ... 3. ... (put each step on its own line)"
 }`;
 
   try {
@@ -395,6 +421,7 @@ Reply with JSON only:
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
+      temperature: 0, // same feature → same verdict when re-run
     });
     const text = completion.choices[0]?.message?.content || '{}';
     const parsed = JSON.parse(text);
@@ -408,5 +435,55 @@ Reply with JSON only:
   } catch (e) {
     console.warn('generateVerdict failed:', e.message);
     return stub();
+  }
+}
+
+/**
+ * Chat about competitor analysis: answer user questions using the analysis as context.
+ * @param {string} featureName
+ * @param {string} featureDescription
+ * @param {object} analysis - { competitors, similarities, differences }
+ * @param {string} userMessage
+ * @returns {Promise<{ reply: string }>}
+ */
+export async function chatAboutCompetitorAnalysis(featureName, featureDescription, analysis, userMessage) {
+  const stubReply = 'Chat is unavailable. Set OPENAI_API_KEY in the backend to ask questions about this competitor analysis.';
+  if (!openai || !userMessage?.trim()) {
+    return { reply: userMessage?.trim() ? stubReply : 'Please type a question.' };
+  }
+
+  const competitors = analysis?.competitors || [];
+  const similarities = analysis?.similarities || [];
+  const differences = analysis?.differences || [];
+  const context = [
+    `Feature: ${featureName}`,
+    featureDescription ? `Description: ${featureDescription}` : '',
+    competitors.length
+      ? `Competitors: ${competitors.map((c) => `${c.name} – ${c.term || 'N/A'}: ${c.howItWorks || ''}`).join('\n')}`
+      : '',
+    similarities.length ? `Similarities: ${similarities.join(' ')}` : '',
+    differences.length ? `Differences: ${differences.join(' ')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const systemContent = `You are a helpful product analyst. The user is viewing a competitor analysis for an OrangeHRM feature. Use ONLY the following context to answer their question. Be concise and accurate. If the answer isn't in the context, say so.
+
+Context:
+${context}`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemContent },
+        { role: 'user', content: userMessage.trim() },
+      ],
+    });
+    const reply = completion.choices[0]?.message?.content?.trim() || 'No reply generated.';
+    return { reply };
+  } catch (e) {
+    console.warn('chatAboutCompetitorAnalysis failed:', e.message);
+    return { reply: `Sorry, I couldn’t answer that: ${e.message}. Try rephrasing or check back later.` };
   }
 }

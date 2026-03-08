@@ -43,6 +43,16 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_client_requests_feature ON client_requests(feature_id);
   CREATE INDEX IF NOT EXISTS idx_scores_feature ON scores(feature_id);
+
+  CREATE TABLE IF NOT EXISTS verdicts (
+    feature_id INTEGER PRIMARY KEY,
+    verdict TEXT NOT NULL,
+    problem_real TEXT,
+    well_understood TEXT,
+    right_time TEXT,
+    next_steps TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 try {

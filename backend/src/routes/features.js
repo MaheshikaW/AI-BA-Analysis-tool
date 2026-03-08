@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { config } from '../config.js';
+import { db } from '../db/db.js';
 import * as openaiService from '../services/openaiService.js';
 import * as googleDocsService from '../services/googleDocsService.js';
-import { fetchSheetRows, fetchInsightsRows, fetchScoringInfo, rowsToFeatureList, SHEET_FETCH_HEADERS, getServiceAccountEmail } from '../services/sheetSyncService.js';
+import { fetchSheetRows, fetchInsightsRows, fetchScoringInfo, rowsToFeatureList, clearSheetCaches, SHEET_FETCH_HEADERS, getServiceAccountEmail } from '../services/sheetSyncService.js';
 
 /** Cache AI-matched insight names by feature id to avoid repeated OpenAI calls. */
 const insightsAiMatchCache = new Map();
@@ -21,6 +22,7 @@ async function getSheetFeatures() {
 
 router.get('/', async (req, res) => {
   try {
+    if (req.query.refresh === '1') clearSheetCaches();
     let list = await getSheetFeatures();
     const moduleFilter = req.query.module;
     const sort = req.query.sort || 'score';
@@ -28,6 +30,7 @@ router.get('/', async (req, res) => {
     if (sort === 'name') list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     else if (sort === 'module') list.sort((a, b) => (a.module || '').localeCompare(b.module || '') || (a.name || '').localeCompare(b.name || ''));
     else list.sort((a, b) => (b.weighted_score || 0) - (a.weighted_score || 0));
+    res.set('Cache-Control', 'no-store');
     res.json(list);
   } catch (e) {
     console.error('Sheet fetch failed:', e.message);
@@ -349,12 +352,12 @@ function filterInsightsByFeature(allRows, featureName) {
   return [];
 }
 
-/** Get insights for a feature: name match only (fast). Optionally use AI when useAi is true (slow). */
+/** Get insights for a feature: name match first, then AI by meaning (insight text context) when needed. */
 async function getInsightsForFeature(feature, allRows, opts = {}) {
-  const useAi = opts.useAi === true;
+  const useAi = opts.useAi !== false; // default true: use AI to match by insight text when sheet has context like "AI Ideas - Team 17"
   let matched = filterInsightsByFeature(allRows, feature.name);
   if (matched.length === 0 && useAi && allRows.length > 0 && feature.name) {
-    const cacheKey = `${feature.id}:${(feature.name || '').trim().toLowerCase()}`;
+    const cacheKey = opts.cacheKey ?? `${feature.id}:${(feature.name || '').trim().toLowerCase()}`;
     let aiMatchedIndices = insightsAiMatchCache.get(cacheKey);
     if (aiMatchedIndices === undefined) {
       try {
@@ -407,7 +410,7 @@ router.get('/by-name/:name/insights', async (req, res) => {
     }
     const allRows = await fetchInsightsRows(doRefresh);
     const textMatched = filterInsightsByFeature(allRows, feature.name);
-    const matched = await getInsightsForFeature(feature, allRows, { useAi: req.query.ai === '1' });
+    const matched = await getInsightsForFeature(feature, allRows, { useAi: req.query.ai !== '0' });
     const insights = matched.map(({ client, insight }) => ({ client: client || '', insight: insight || '' }));
     const payload = { insights };
     if (insights.length === 0) {
@@ -436,6 +439,27 @@ router.get('/by-name/:name/insights', async (req, res) => {
   }
 });
 
+/** POST client insights by context (name + description). No feature ID needed; matches from insights sheet using name + AI by meaning. */
+router.post('/insights-by-context', async (req, res) => {
+  try {
+    const name = (req.body?.name ?? req.query?.name ?? '').trim();
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    const description = (req.body?.description ?? req.query?.description ?? '').trim();
+    const doRefresh = req.query.refresh === '1' || req.body?.refresh === true;
+    const contextKey = `ctx:${name.toLowerCase()}:${(description || '').slice(0, 200)}`;
+    if (doRefresh) insightsAiMatchCache.delete(contextKey);
+    const feature = { id: 0, name, description };
+    const allRows = await fetchInsightsRows(doRefresh);
+    const matched = await getInsightsForFeature(feature, allRows, { useAi: req.query.ai !== '0', cacheKey: contextKey });
+    const insights = matched.map(({ client, insight }) => ({ client: client || '', insight: insight || '' }));
+    const payload = { insights };
+    if (insights.length === 0) payload._meta = { sheetRowCount: allRows.length };
+    res.json(payload);
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
 /** GET client insights from sheet (Sample Client Insights tab). Match by feature name only (fast). ?ai=1 enables AI fallback (slow). ?refresh=1 refetches sheet. Must be before GET /:id. */
 router.get('/:id/insights', async (req, res) => {
   try {
@@ -448,7 +472,7 @@ router.get('/:id/insights', async (req, res) => {
     }
     const allRows = await fetchInsightsRows(doRefresh);
     const textMatched = filterInsightsByFeature(allRows, feature.name);
-    const matched = await getInsightsForFeature(feature, allRows, { useAi: req.query.ai === '1' });
+    const matched = await getInsightsForFeature(feature, allRows, { useAi: req.query.ai !== '0' });
     const insights = matched.map(({ client, insight }) => ({ client: client || '', insight: insight || '' }));
     const payload = { insights };
     if (insights.length === 0) {
@@ -483,7 +507,7 @@ router.get('/:id/customer-insights-html', async (req, res) => {
     const feature = await getFeatureById(req.params.id);
     if (!feature) return res.status(404).json({ error: 'Feature not found' });
     const allRows = await fetchInsightsRows(req.query.refresh === '1');
-    const matched = await getInsightsForFeature(feature, allRows);
+    const matched = await getInsightsForFeature(feature, allRows, { useAi: true });
     const insights = matched.map(({ client, insight }) => ({ client: client || '', insight: insight || '' }));
     const html = buildCustomerInsightsHtml(feature, insights);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -515,21 +539,61 @@ router.get('/:id/use-case', async (req, res) => {
   }
 });
 
-/** GET verdict for a feature (Are We Solving The Right Problem?). Cached. ?refresh=1 to regenerate. */
+/** GET verdict for a feature (Are We Solving The Right Problem?). Persisted in DB; in-memory cache for speed. ?refresh=1 to regenerate. */
 const verdictCache = new Map();
+
+function getVerdictFromDb(featureId) {
+  const row = db.prepare('SELECT verdict, problem_real, well_understood, right_time, next_steps FROM verdicts WHERE feature_id = ?').get(Number(featureId));
+  if (!row) return null;
+  return {
+    verdict: row.verdict,
+    problemReal: row.problem_real ?? '—',
+    wellUnderstood: row.well_understood ?? '—',
+    rightTime: row.right_time ?? '—',
+    nextSteps: row.next_steps ?? '—',
+  };
+}
+
+function saveVerdictToDb(featureId, verdict) {
+  db.prepare(
+    `INSERT INTO verdicts (feature_id, verdict, problem_real, well_understood, right_time, next_steps, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(feature_id) DO UPDATE SET
+       verdict = excluded.verdict,
+       problem_real = excluded.problem_real,
+       well_understood = excluded.well_understood,
+       right_time = excluded.right_time,
+       next_steps = excluded.next_steps,
+       updated_at = datetime('now')`
+  ).run(
+    Number(featureId),
+    verdict.verdict ?? '—',
+    verdict.problemReal ?? '—',
+    verdict.wellUnderstood ?? '—',
+    verdict.rightTime ?? '—',
+    verdict.nextSteps ?? '—'
+  );
+}
+
 router.get('/:id/verdict', async (req, res) => {
   try {
     const id = req.params.id;
     const forceRefresh = req.query.refresh === '1';
     const feature = await getFeatureById(id);
     if (!feature) return res.status(404).json({ error: 'Feature not found' });
-    if (!forceRefresh && verdictCache.has(String(id))) {
-      return res.json(verdictCache.get(String(id)));
+    if (!forceRefresh) {
+      if (verdictCache.has(String(id))) return res.json(verdictCache.get(String(id)));
+      const stored = getVerdictFromDb(id);
+      if (stored) {
+        verdictCache.set(String(id), stored);
+        return res.json(stored);
+      }
     }
     const verdict = await openaiService.generateVerdict(
       feature.name || '',
       feature.description || ''
     );
+    saveVerdictToDb(id, verdict);
     verdictCache.set(String(id), verdict);
     res.json(verdict);
   } catch (e) {
@@ -579,6 +643,7 @@ router.post('/:id/requests', (req, res) => {
 });
 
 router.post('/recalculate-scores', (req, res) => {
+  clearSheetCaches();
   res.json({ message: 'Scores are computed from the sheet (number of requested clients per feature).', recalculated: 0 });
 });
 
@@ -654,6 +719,36 @@ router.post('/:id/competitor-analysis', async (req, res) => {
   }
 });
 
+/** POST chat about competitor analysis (ask questions, get AI reply using analysis as context). */
+router.post('/:id/competitor-chat', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const message = req.body?.message;
+    const feature = await getFeatureById(id);
+    if (!feature) return res.status(404).json({ error: 'Feature not found' });
+
+    let analysis = competitorAnalysisCache.get(String(id));
+    if (!analysis) {
+      try {
+        analysis = await openaiService.generateCompetitorAnalysis(feature.name, feature.description || '');
+        competitorAnalysisCache.set(String(id), analysis);
+      } catch (e) {
+        analysis = { competitors: [], similarities: [], differences: [] };
+      }
+    }
+
+    const { reply } = await openaiService.chatAboutCompetitorAnalysis(
+      feature.name || '',
+      feature.description || '',
+      analysis,
+      typeof message === 'string' ? message : ''
+    );
+    res.json({ reply });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
 /** Build use case document as HTML (for PDF via print). Optional competitor analysis and useCase sections. */
 function buildUseCaseDocumentHtml(feature, competitorAnalysis = null, useCase = null) {
   const uc = useCase || {
@@ -673,11 +768,18 @@ function buildUseCaseDocumentHtml(feature, competitorAnalysis = null, useCase = 
   const competitorRows = hasCompetitors
     ? competitors
         .map((c) => {
-          const helpUrl = c.helpArticleUrl && String(c.helpArticleUrl).startsWith('http') ? c.helpArticleUrl : null;
-          const searchQuery = c.helpSearchQuery && String(c.helpSearchQuery).trim() ? c.helpSearchQuery : `${c.name || ''} ${c.term || ''} documentation`.trim();
-          const link = helpUrl || `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
-          const linkText = (c.helpArticleTitle && String(c.helpArticleTitle).trim()) || (helpUrl ? 'Help article' : 'Search docs');
-          const helpCell = `<a href="${escapeHtml(link)}" target="_blank" rel="noopener">${escapeHtml(linkText)}</a>`;
+          const links = [];
+          const articles = Array.isArray(c.helpArticles) ? c.helpArticles.slice(0, 2) : [];
+          for (const a of articles) {
+            if (a && a.url && String(a.url).startsWith('http')) links.push({ title: (a.title && String(a.title).trim()) || 'Help article', url: a.url });
+          }
+          if (links.length < 2 && c.helpArticleUrl && String(c.helpArticleUrl).startsWith('http') && !links.some((l) => l.url === c.helpArticleUrl)) {
+            links.push({ title: (c.helpArticleTitle && String(c.helpArticleTitle).trim()) || 'Help article', url: c.helpArticleUrl });
+          }
+          const linkStyle = 'font-size:0.8rem;color:#ea580c;word-break:break-all;text-decoration:none;';
+          const helpCell = links.length
+            ? links.slice(0, 2).map((l) => `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.title)}</a><br><a href="${escapeHtml(l.url)}" target="_blank" rel="noopener" style="${linkStyle}">${escapeHtml(l.url)}</a>`).join('<br>')
+            : '';
           return `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.term || '—')}</td><td>${escapeHtml(c.howItWorks || '—')}</td><td>${helpCell}</td></tr>`;
         })
         .join('')
@@ -717,7 +819,7 @@ function buildUseCaseDocumentHtml(feature, competitorAnalysis = null, useCase = 
     ${hasSimilarities ? `<p><strong>Similarities</strong> (vs competitors):</p><ul>${similarities.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}</ul>` : ''}
     ${hasDifferences ? `<p><strong>Differences</strong> (vs competitors):</p><ul>${differences.map((d) => `<li>${escapeHtml(d)}</li>`).join('')}</ul>` : ''}
     ${hasCompetitors ? `<p><strong>Competitor mapping</strong></p><table>
-      <thead><tr><th>Competitor</th><th>Term</th><th>How it works</th><th>Help / links</th></tr></thead>
+      <thead><tr><th>Competitor</th><th>Term</th><th>How it works</th><th>Source URLs</th></tr></thead>
       <tbody>${competitorRows}</tbody>
     </table>` : ''}
   </div>
@@ -802,11 +904,19 @@ function buildCompetitorAnalysisSectionHtml(feature, analysis) {
   const competitorRows = hasCompetitors
     ? competitors
         .map((c) => {
-          const helpUrl = c.helpArticleUrl && String(c.helpArticleUrl).startsWith('http') ? c.helpArticleUrl : null;
-          const searchQuery = c.helpSearchQuery && String(c.helpSearchQuery).trim() ? c.helpSearchQuery : `${c.name || ''} ${c.term || ''} documentation`.trim();
-          const link = helpUrl || `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
-          const linkText = (c.helpArticleTitle && String(c.helpArticleTitle).trim()) || (helpUrl ? 'Help article' : 'Search docs');
-          return `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.term || '—')}</td><td>${escapeHtml(c.howItWorks || '—')}</td><td><a href="${escapeHtml(link)}" target="_blank" rel="noopener">${escapeHtml(linkText)}</a></td></tr>`;
+          const links = [];
+          const articles = Array.isArray(c.helpArticles) ? c.helpArticles.slice(0, 2) : [];
+          for (const a of articles) {
+            if (a && a.url && String(a.url).startsWith('http')) links.push({ title: (a.title && String(a.title).trim()) || 'Help article', url: a.url });
+          }
+          if (links.length < 2 && c.helpArticleUrl && String(c.helpArticleUrl).startsWith('http') && !links.some((l) => l.url === c.helpArticleUrl)) {
+            links.push({ title: (c.helpArticleTitle && String(c.helpArticleTitle).trim()) || 'Help article', url: c.helpArticleUrl });
+          }
+          const linkStyle = 'font-size:0.8rem;color:#ea580c;word-break:break-all;text-decoration:none;';
+          const sourceCell = links.length
+            ? links.slice(0, 2).map((l) => `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.title)}</a><br><a href="${escapeHtml(l.url)}" target="_blank" rel="noopener" style="${linkStyle}">${escapeHtml(l.url)}</a>`).join('<br>')
+            : '';
+          return `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.term || '—')}</td><td>${escapeHtml(c.howItWorks || '—')}</td><td>${sourceCell}</td></tr>`;
         })
         .join('')
     : '';
@@ -816,7 +926,7 @@ function buildCompetitorAnalysisSectionHtml(feature, analysis) {
   ${feature.description ? `<p>${escapeHtml(feature.description)}</p>` : ''}
   ${hasSim ? `<h2>Similarities</h2><ul>${similarities.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}</ul>` : ''}
   ${hasDiff ? `<h2>Differences</h2><ul>${differences.map((d) => `<li>${escapeHtml(d)}</li>`).join('')}</ul>` : ''}
-  ${hasCompetitors ? `<h2>Competitor mapping</h2><table><thead><tr><th>Competitor</th><th>Term</th><th>How it works</th><th>Help / links</th></tr></thead><tbody>${competitorRows}</tbody></table>` : ''}
+  ${hasCompetitors ? `<h2>Competitor mapping</h2><table><thead><tr><th>Competitor</th><th>Term</th><th>How it works</th><th>Source URLs</th></tr></thead><tbody>${competitorRows}</tbody></table>` : ''}
 `;
 }
 

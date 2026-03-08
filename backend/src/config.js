@@ -37,6 +37,26 @@ export const config = {
         return { enterprise: 3, professional: 2, starter: 1 };
       }
     })(),
+    /** Total OrangeHRM clients per tier (for demand-rate formula). Keys: score 1=Tier1, 2=Tier2, 3=Tier3, 4=High-Platinum. Set TIER_TOTALS_JSON env to override. */
+    tierTotals: (() => {
+      try {
+        const raw = process.env.TIER_TOTALS_JSON;
+        if (raw && raw.trim()) return JSON.parse(raw);
+      } catch {}
+      return { 1: 379, 2: 756, 3: 71, 4: 201 };
+    })(),
+    /** Tier weight per score for demand-rate formula. Set TIER_WEIGHTS_JSON env e.g. {"1":1,"2":2,"3":3,"4":4} to override. */
+    tierWeightsByScore: (() => {
+      try {
+        const raw = process.env.TIER_WEIGHTS_JSON;
+        if (raw && raw.trim()) return JSON.parse(raw);
+      } catch {}
+      return { 1: 1, 2: 2, 3: 3, 4: 4 };
+    })(),
+    /** If true, score = sum of tier scores per request (then normalized to 100). If false, use demand-rate formula. Set SCORING_SIMPLE=1 in .env for simple sum. */
+    simpleScoreMode: process.env.SCORING_SIMPLE === '1' || process.env.SCORING_SIMPLE === 'true',
+    /** If true, normalize so the top feature = 100. Default false: show raw weighted score so no feature shows 100. Set SCORING_NORMALIZE_TO_100=1 in .env to scale to 100. */
+    normalizeTo100: process.env.SCORING_NORMALIZE_TO_100 === '1' || process.env.SCORING_NORMALIZE_TO_100 === 'true',
   },
   sheet: {
     id: process.env.GOOGLE_SHEET_ID || '1y5PNfslFtC8sanhWKTnapd6SqbddF2qzckBA_rDnTdc',

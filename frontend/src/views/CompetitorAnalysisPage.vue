@@ -47,7 +47,8 @@
           :class="{ active: activeTab === 'competitor' }"
           @click="activeTab = 'competitor'"
         >
-          Competitor analysis
+          <svg class="tab-icon" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 9.9c-4.6 0.9-6 2.3-6.9 6.9c-0.9-4.6-2.3-6-6.9-6.9C8.7 9 10.1 7.6 11 3C11.9 7.6 13.3 9 17.9 9.9z"/><path d="M21.8 25c-3.2 0.6-4.1 1.6-4.8 4.8c-0.6-3.2-1.6-4.1-4.8-4.8c3.2-0.6 4.1-1.6 4.8-4.8C17.6 23.4 18.6 24.4 21.8 25z"/><path d="M29 15c-2.6 0.5-3.4 1.3-3.9 3.9c-0.5-2.6-1.3-3.4-3.9-3.9c2.6-0.5 3.4-1.3 3.9-3.9C25.6 13.7 26.4 14.5 29 15z"/></svg>
+          In Depth Analysis
         </button>
         <button
           type="button"
@@ -67,52 +68,96 @@
         </button>
       </div>
 
-      <div v-show="activeTab === 'competitor'" class="tab-panel analysis-content">
-        <p v-if="result?.stub" class="stub-note">Stub output. Set OPENAI_API_KEY for real AI analysis.</p>
-        <template v-else>
-          <section v-if="result?.analysis">
-            <h3>Similarities & differences vs competitors</h3>
-            <div class="sim-diff">
-              <strong>Similarities</strong>
-              <ul v-if="result.analysis.similarities?.length"><li v-for="(s, i) in result.analysis.similarities" :key="i">{{ s }}</li></ul>
-              <p v-else class="sim-diff-empty">No similarities generated. Run analysis again with OPENAI_API_KEY set.</p>
+      <div v-show="activeTab === 'competitor'" class="tab-panel competitor-tab-wrap">
+        <div class="competitor-layout">
+          <div class="competitor-main analysis-content">
+            <p v-if="result?.stub" class="stub-note">Stub output. Set OPENAI_API_KEY for real AI analysis.</p>
+            <template v-else>
+              <section v-if="result?.analysis">
+                <h3>Similarities & differences vs competitors</h3>
+                <div class="sim-diff">
+                  <strong>Similarities</strong>
+                  <ul v-if="result.analysis.similarities?.length"><li v-for="(s, i) in result.analysis.similarities" :key="i">{{ s }}</li></ul>
+                  <p v-else class="sim-diff-empty">No similarities generated. Run analysis again with OPENAI_API_KEY set.</p>
+                </div>
+                <div class="sim-diff">
+                  <strong>Differences</strong>
+                  <ul v-if="result.analysis.differences?.length"><li v-for="(d, i) in result.analysis.differences" :key="i">{{ d }}</li></ul>
+                  <p v-else class="sim-diff-empty">No differences generated. Run analysis again with OPENAI_API_KEY set.</p>
+                </div>
+              </section>
+              <section v-if="result?.analysis?.competitors?.length">
+                <h3>Competitor mapping, how it works & source URLs</h3>
+                <table class="compact">
+                  <thead>
+                    <tr><th>Competitor</th><th>Term</th><th>How it works</th><th>Source URLs</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="c in result.analysis.competitors" :key="c.name">
+                      <td><strong>{{ c.name }}</strong></td>
+                      <td>{{ c.term || '—' }}</td>
+                      <td>{{ c.howItWorks || '—' }}</td>
+                      <td class="source-urls">
+                        <template v-for="(article, idx) in competitorHelpLinks(c)" :key="idx">
+                          <div class="source-url-row">
+                            <a :href="article.url" target="_blank" rel="noopener noreferrer">{{ article.title }}</a>
+                            <a :href="article.url" target="_blank" rel="noopener noreferrer" class="source-url-exact">{{ article.url }}</a>
+                          </div>
+                        </template>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+              <section v-else-if="result?.analysis?.competitors && typeof result.analysis.competitors === 'object'">
+                <h3>Competitor terms (stub)</h3>
+                <ul>
+                  <li v-for="(term, name) in result.analysis.competitors" :key="name"><strong>{{ name }}</strong>: {{ term }}</li>
+                </ul>
+              </section>
+            </template>
+          </div>
+
+          <!-- Chat box: right side -->
+          <aside v-if="result" class="chat-box">
+            <div class="chat-box-header">
+              <h3>Chat</h3>
+              <p class="chat-hint">Ask about competitors, comparisons, or where to find more info.</p>
             </div>
-            <div class="sim-diff">
-              <strong>Differences</strong>
-              <ul v-if="result.analysis.differences?.length"><li v-for="(d, i) in result.analysis.differences" :key="i">{{ d }}</li></ul>
-              <p v-else class="sim-diff-empty">No differences generated. Run analysis again with OPENAI_API_KEY set.</p>
+            <div class="chat-messages" ref="chatMessagesEl">
+              <div
+                v-for="(msg, i) in chatMessages"
+                :key="i"
+                class="chat-msg"
+                :class="msg.role"
+              >
+                <span class="chat-msg-label">{{ msg.role === 'user' ? 'You' : 'Assistant' }}</span>
+                <div class="chat-msg-content">{{ msg.content }}</div>
+              </div>
+              <div v-if="chatLoading" class="chat-msg assistant">
+                <span class="chat-msg-label">Assistant</span>
+                <div class="chat-msg-content typing">Thinking…</div>
+              </div>
             </div>
-          </section>
-          <section v-if="result?.analysis?.competitors?.length">
-            <h3>Competitor mapping, how it works & help links</h3>
-            <table class="compact">
-              <thead>
-                <tr><th>Competitor</th><th>Term</th><th>How it works</th><th>Help / links</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="c in result.analysis.competitors" :key="c.name">
-                  <td><strong>{{ c.name }}</strong></td>
-                  <td>{{ c.term || '—' }}</td>
-                  <td>{{ c.howItWorks || '—' }}</td>
-                  <td class="help-links">
-                    <template v-if="c.helpArticleUrl">
-                      <a :href="c.helpArticleUrl" target="_blank" rel="noopener noreferrer">{{ c.helpArticleTitle || 'Help article' }}</a>
-                    </template>
-                    <template v-else>
-                      <a :href="'https://www.google.com/search?q=' + encodeURIComponent(c.helpSearchQuery || (c.name + ' ' + (c.term || '') + ' documentation'))" target="_blank" rel="noopener noreferrer">{{ c.helpArticleTitle || 'Search docs' }}</a>
-                    </template>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </section>
-          <section v-else-if="result?.analysis?.competitors && typeof result.analysis.competitors === 'object'">
-            <h3>Competitor terms (stub)</h3>
-            <ul>
-              <li v-for="(term, name) in result.analysis.competitors" :key="name"><strong>{{ name }}</strong>: {{ term }}</li>
-            </ul>
-          </section>
-        </template>
+            <div class="chat-input-row">
+              <input
+                v-model="chatInput"
+                type="text"
+                class="chat-input"
+                placeholder="e.g. How does BambooHR handle this?"
+                @keydown.enter.prevent="sendChatMessage"
+              />
+              <button
+                type="button"
+                class="btn chat-send"
+                :disabled="chatLoading || !chatInput.trim()"
+                @click="sendChatMessage"
+              >
+                {{ chatLoading ? '…' : 'Send' }}
+              </button>
+            </div>
+          </aside>
+        </div>
       </div>
 
       <div v-show="activeTab === 'use-case'" class="tab-panel use-case-content oxd-mock">
@@ -302,6 +347,30 @@ const useCaseLoading = ref(false);
 const mockUISpec = ref(null);
 const mockUILoading = ref(false);
 const mockUIError = ref('');
+const chatMessages = ref([]);
+const chatInput = ref('');
+const chatLoading = ref(false);
+const chatMessagesEl = ref(null);
+/** Chat history per feature id so each feature's conversation continues when you switch back */
+const chatHistoryByFeature = ref({});
+
+function competitorSearchUrl(c) {
+  const q = c.helpSearchQuery || `${c.name || ''} ${c.term || ''} documentation`.trim();
+  return `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+}
+
+/** Up to 2 help article links per competitor (no search links). */
+function competitorHelpLinks(c) {
+  const out = [];
+  const articles = Array.isArray(c.helpArticles) ? c.helpArticles : [];
+  for (const a of articles.slice(0, 2)) {
+    if (a && a.url) out.push({ title: a.title || 'Help article', url: a.url });
+  }
+  if (out.length < 2 && c.helpArticleUrl && !articles.some((a) => a && a.url === c.helpArticleUrl)) {
+    out.push({ title: c.helpArticleTitle || 'Help article', url: c.helpArticleUrl });
+  }
+  return out.slice(0, 2);
+}
 
 /** Use API spec or build fallback from feature so UI always has something to show */
 const displayMockSpec = computed(() => {
@@ -348,6 +417,8 @@ async function load() {
   useCase.value = null;
   mockUISpec.value = null;
   mockUIError.value = '';
+  chatMessages.value = chatHistoryByFeature.value[String(id)] ?? [];
+  chatInput.value = '';
   activeTab.value = 'competitor';
   try {
     const [featureRes, analysisRes] = await Promise.all([
@@ -403,6 +474,27 @@ function selectUIExampleTab() {
   if (mockUISpec.value == null && !mockUILoading.value) loadMockUI();
 }
 
+async function sendChatMessage() {
+  const text = chatInput.value?.trim();
+  if (!text || chatLoading.value) return;
+  const id = String(props.id);
+  chatMessages.value = [...chatMessages.value, { role: 'user', content: text }];
+  chatInput.value = '';
+  chatLoading.value = true;
+  try {
+    const { reply } = await api.competitorChat(Number(props.id), text);
+    chatMessages.value = [...chatMessages.value, { role: 'assistant', content: reply }];
+  } catch (e) {
+    chatMessages.value = [...chatMessages.value, { role: 'assistant', content: e.message || 'Failed to get a reply.' }];
+  } finally {
+    chatLoading.value = false;
+  }
+  chatHistoryByFeature.value = { ...chatHistoryByFeature.value, [id]: [...chatMessages.value] };
+  setTimeout(() => {
+    if (chatMessagesEl.value) chatMessagesEl.value.scrollTop = chatMessagesEl.value.scrollHeight;
+  }, 50);
+}
+
 async function exportThisFeaturePdf() {
   if (!feature.value) return;
   pdfLoading.value = true;
@@ -438,7 +530,7 @@ onMounted(load);
 </script>
 
 <style scoped>
-.competitor-page { max-width: 900px; }
+.competitor-page { max-width: 1436px; }
 .page-header { margin-bottom: 1rem; }
 .back-link { display: inline-block; margin-bottom: 0.5rem; color: var(--accent); text-decoration: none; font-size: 0.9rem; }
 .back-link:hover { text-decoration: underline; }
@@ -459,11 +551,22 @@ onMounted(load);
 .feature-mock-footer .feature-mock-value { margin-top: 0.2rem; }
 
 .tabs { display: flex; gap: 0; margin-bottom: 1.25rem; border-bottom: 1px solid var(--border); }
-.tab { padding: 0.6rem 1.25rem; font-size: 0.9rem; font-weight: 600; background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; font-family: inherit; margin-bottom: -1px; }
+.tab { padding: 0.6rem 1.25rem; font-size: 0.9rem; font-weight: 600; background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; font-family: inherit; margin-bottom: -1px; display: inline-flex; align-items: center; gap: 0.45rem; }
+.tab .tab-icon { width: 1.1em; height: 1.1em; flex-shrink: 0; }
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
 .tab-panel { min-height: 120px; }
+.competitor-tab-wrap { padding-top: 0.25rem; }
+.competitor-layout { display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap; }
+.competitor-main { flex: 1; min-width: 0; min-height: 120px; }
+.chat-box { width: 360px; flex-shrink: 0; background: rgba(38,38,42,0.98); border: 1px solid rgba(249,115,22,0.35); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; max-height: min(calc(100vh - 120px), 920px); box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
+.chat-box-header { padding: 1rem 1.25rem; border-bottom: 1px solid rgba(249,115,22,0.25); background: rgba(249,115,22,0.08); }
+.chat-box-header h3 { margin: 0 0 0.35rem 0; font-size: 1rem; font-weight: 600; color: var(--accent); }
+.chat-box .chat-hint { margin: 0; font-size: 0.8rem; color: #a8a8b0; }
+.chat-box .chat-messages { flex: 1; min-height: 160px; background: rgba(0,0,0,0.15); }
+.chat-box .chat-input-row { padding: 0.75rem 1rem; border-top: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.1); }
+@media (max-width: 900px) { .chat-box { width: 100%; max-width: 100%; max-height: 640px; } }
 .loading-inline { padding: 2rem; text-align: center; color: var(--muted); }
 
 /* OXD-inspired Use case tab (ref: https://oxd-int-infinity.orangehrm.com/) */
@@ -545,10 +648,34 @@ onMounted(load);
 .compact { width: 100%; border-collapse: collapse; font-size: 0.9rem; background: var(--surface); border-radius: var(--radius); overflow: hidden; }
 .compact th, .compact td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
 .compact th { background: rgba(0,0,0,0.2); color: var(--muted); font-weight: 600; }
-.compact .help-links a { color: var(--accent); text-decoration: none; }
-.compact .help-links a:hover { text-decoration: underline; }
+.compact .source-urls { vertical-align: top; }
+.compact .source-urls a { color: var(--accent); text-decoration: none; display: inline-block; margin-bottom: 0.25rem; }
+.compact .source-urls a:hover { text-decoration: underline; }
+.compact .source-url-row { margin-bottom: 0.5rem; }
+.compact .source-url-row:last-child { margin-bottom: 0; }
+.compact .source-url-exact { display: block; font-size: 0.75rem; color: var(--accent); word-break: break-all; line-height: 1.35; max-width: 320px; text-decoration: none; margin-top: 0.2rem; }
+.compact .source-url-exact:hover { text-decoration: underline; }
+.compact .source-url-empty { margin: 0; font-size: 0.85rem; color: var(--muted); }
 ul { margin: 0; padding-left: 1.25rem; }
 li { margin-bottom: 0.25rem; }
+
+/* Chat box (right side) */
+.chat-messages { overflow-y: auto; padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.75rem; flex: 1; }
+.chat-msg { display: flex; flex-direction: column; gap: 0.2rem; align-items: flex-start; max-width: 95%; }
+.chat-msg.user { align-self: flex-end; }
+.chat-msg-label { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+.chat-msg-content { font-size: 0.9rem; line-height: 1.45; padding: 0.5rem 0.75rem; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
+.chat-msg.user .chat-msg-content { background: rgba(249,115,22,0.2); color: var(--text); }
+.chat-msg.assistant .chat-msg-content { background: rgba(255,255,255,0.06); color: var(--text); }
+.chat-msg-content.typing { color: var(--muted); font-style: italic; }
+.chat-input-row { display: flex; gap: 0.5rem; align-items: center; }
+.chat-box .chat-input { flex: 1; padding: 0.6rem 0.75rem; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.18); border-radius: var(--radius); color: var(--text); font-size: 0.9rem; font-family: inherit; }
+.chat-box .chat-input::placeholder { color: #9ca3af; }
+.chat-box .chat-input:focus { outline: none; border-color: var(--accent); background: rgba(255,255,255,0.09); }
+.chat-box .chat-send { flex-shrink: 0; background: var(--accent); color: #fff; border: none; padding: 0.6rem 1rem; font-weight: 600; border-radius: var(--radius); cursor: pointer; }
+.chat-box .chat-send:hover:not(:disabled) { background: var(--accent-dim); }
+.chat-box .chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .page-actions { margin-top: 1.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .btn { padding: 0.5rem 1rem; border-radius: var(--radius); font-weight: 600; cursor: pointer; border: none; font-family: inherit; text-decoration: none; display: inline-block; font-size: 0.9rem; }
 .btn.primary { background: var(--accent); color: #fff; }

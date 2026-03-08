@@ -87,6 +87,17 @@ export async function getCompetitorAnalysis(featureId, refresh = false) {
   return res.json();
 }
 
+/** POST chat about competitor analysis. Body: { message }. Returns { reply }. */
+export async function competitorChat(featureId, message) {
+  const res = await fetch(`${base}/features/${featureId}/competitor-chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 /** POST competitor analysis (generate + create Google Doc). Returns { analysis, doc }. */
 export async function requestCompetitorAnalysis(featureId) {
   const res = await fetch(`${base}/features/${featureId}/competitor-analysis`, { method: 'POST' });
@@ -97,6 +108,17 @@ export async function requestCompetitorAnalysis(featureId) {
 export async function getFeatureInsights(featureId, refresh = false) {
   const url = `${base}/features/${featureId}/insights${refresh ? '?refresh=1' : ''}`;
   const res = await fetch(url);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+/** Get client insights by context (feature name + description). No feature ID needed. */
+export async function getInsightsByContext({ name, description = '' }, refresh = false) {
+  const res = await fetch(`${base}/features/insights-by-context${refresh ? '?refresh=1' : ''}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name || '', description: description || '', refresh }),
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

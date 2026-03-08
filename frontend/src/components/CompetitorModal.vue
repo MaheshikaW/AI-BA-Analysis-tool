@@ -18,22 +18,22 @@
           </div>
         </section>
         <section v-if="result.analysis?.competitors?.length">
-          <h3>Competitor mapping, how it works & help links</h3>
+          <h3>Competitor mapping, how it works & source URLs</h3>
           <table class="compact">
             <thead>
-              <tr><th>Competitor</th><th>Term</th><th>How it works</th><th>Help / links</th></tr>
+              <tr><th>Competitor</th><th>Term</th><th>How it works</th><th>Source URLs</th></tr>
             </thead>
             <tbody>
               <tr v-for="c in result.analysis.competitors" :key="c.name">
                 <td><strong>{{ c.name }}</strong></td>
                 <td>{{ c.term || '—' }}</td>
                 <td>{{ c.howItWorks || '—' }}</td>
-                <td class="help-links">
-                  <template v-if="c.helpArticleUrl">
-                    <a :href="c.helpArticleUrl" target="_blank" rel="noopener noreferrer">{{ c.helpArticleTitle || 'Help article' }}</a>
-                  </template>
-                  <template v-else>
-                    <a :href="'https://www.google.com/search?q=' + encodeURIComponent(c.helpSearchQuery || (c.name + ' ' + (c.term || '') + ' documentation'))" target="_blank" rel="noopener noreferrer">{{ c.helpArticleTitle || 'Search docs' }}</a>
+                <td class="source-urls">
+                  <template v-for="(article, idx) in competitorHelpLinks(c)" :key="idx">
+                    <div class="source-url-row">
+                      <a :href="article.url" target="_blank" rel="noopener noreferrer">{{ article.title }}</a>
+                      <a :href="article.url" target="_blank" rel="noopener noreferrer" class="source-url-exact">{{ article.url }}</a>
+                    </div>
                   </template>
                 </td>
               </tr>
@@ -64,6 +64,24 @@ import * as api from '../api';
 const props = defineProps({ result: { type: Object, required: true } });
 defineEmits(['close']);
 const pdfLoading = ref(false);
+
+function competitorSearchUrl(c) {
+  const q = c.helpSearchQuery || `${c.name || ''} ${c.term || ''} documentation`.trim();
+  return `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+}
+
+/** Up to 2 help article links per competitor (no search links). */
+function competitorHelpLinks(c) {
+  const out = [];
+  const articles = Array.isArray(c.helpArticles) ? c.helpArticles : [];
+  for (const a of articles.slice(0, 2)) {
+    if (a && a.url) out.push({ title: a.title || 'Help article', url: a.url });
+  }
+  if (out.length < 2 && c.helpArticleUrl && !articles.some((a) => a && a.url === c.helpArticleUrl)) {
+    out.push({ title: c.helpArticleTitle || 'Help article', url: c.helpArticleUrl });
+  }
+  return out.slice(0, 2);
+}
 
 async function downloadUseCasePdf() {
   pdfLoading.value = true;
@@ -109,9 +127,14 @@ async function downloadUseCasePdf() {
 .compact th, .compact td { padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border); }
 .compact th { color: var(--muted); font-weight: 600; }
 .compact td:last-child { max-width: 320px; }
-.compact .help-links a { color: var(--accent); text-decoration: none; }
-.compact .help-links a:hover { text-decoration: underline; }
-.compact td:nth-child(4) { max-width: 180px; }
+.compact .source-urls a { color: var(--accent); text-decoration: none; display: inline-block; margin-bottom: 0.25rem; }
+.compact .source-urls a:hover { text-decoration: underline; }
+.compact .source-url-row { margin-bottom: 0.5rem; }
+.compact .source-url-row:last-child { margin-bottom: 0; }
+.compact .source-url-exact { display: block; font-size: 0.75rem; color: var(--accent); word-break: break-all; line-height: 1.35; text-decoration: none; margin-top: 0.2rem; }
+.compact .source-url-exact:hover { text-decoration: underline; }
+.compact .source-url-empty { margin: 0; font-size: 0.85rem; color: var(--muted); }
+.compact td:nth-child(4) { max-width: 320px; }
 ul { margin: 0; padding-left: 1.25rem; }
 li { margin-bottom: 0.25rem; }
 .modal-actions { margin-top: 1.25rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
